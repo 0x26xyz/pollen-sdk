@@ -1,0 +1,49 @@
+{
+  "name": "@pollen/sdk",
+  "version": "0.1.0",
+  "description": "A domain-independent TypeScript client for Pollen.",
+  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0x26xyz/pollen-sdk.git"
+  },
+  "homepage": "https://github.com/0x26xyz/pollen-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/0x26xyz/pollen-sdk/issues"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "prepack": "npm run build",
+    "format:check": "prettier --check src test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/client": "2.4.0",
+    "zod": "^4.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "^7.0.2",
+    "vitest": "5.0.5",
+    "prettier": "3.9.9"
+  }
+}
