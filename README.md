@@ -9,7 +9,7 @@ Pollen code handles the Pollen record contract and registered application API.
 
 ## Package status
 
-Version 0.2.0 is a release candidate. It is not published to npm.
+Version 0.2.1 is a release candidate. It is not published to npm.
 The package name and registry scope remain provisional. The `private` flag
 prevents an accidental npm publication. Build the candidate archive from a
 reviewed commit:
@@ -22,7 +22,7 @@ npm pack
 Install that archive in the consuming application:
 
 ```sh
-npm install /path/to/pollen-sdk-0.2.0.tgz
+npm install /path/to/pollen-sdk-0.2.1.tgz
 ```
 
 The two import paths belong to the same package:
@@ -139,6 +139,9 @@ A person can have memberships in several organizations. Each registered
 integration keeps one destination. For customer organizations, the application
 backend selects a registered client from its trusted customer map. This version
 does not create organizations or accept a user-supplied destination.
+Customer references use Pollen's text rules: at most 128 UTF-16 code units,
+some non-whitespace text, and no ASCII control characters. The SDK preserves
+the exact value. A reference can contain slashes, spaces, or Unicode text.
 
 An existing staff membership keeps its role and access. Customer setup does
 not promote a member. A new protected membership can use only its registered
@@ -163,6 +166,9 @@ if (status.state === "setup_required") {
 
 Pollen asks the user to sign in and confirm the Pollen account. It returns a
 short-lived `pollen_code` and `pollen_state` in the registered callback fragment.
+The transaction's `expiresAt` includes the two-minute code lifetime after the
+start link expires. Keep the server session or cookie until that deadline.
+Pollen checks each code's actual expiry from its confirmation time.
 The callback page must remove that fragment from browser history at once. It
 must send the values to its own authenticated server route. Do not log them.
 

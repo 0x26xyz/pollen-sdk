@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { PollenApplication, onboardingTemplates } from "../src/server.js";
 
 const user = { subject: "person-1", proof: "fixture-user-proof", signal: new AbortController().signal };
@@ -36,6 +36,8 @@ function fixture(response: unknown | ((input: any) => unknown)) {
     });
     return { app, request };
 }
+
+afterEach(() => vi.restoreAllMocks());
 
 describe("server-owned onboarding policies", () => {
     it.each(onboardingTemplates)("reads the %s policy without selecting user permissions", async (template) => {
@@ -98,6 +100,77 @@ describe("server-owned onboarding policies", () => {
         ).rejects.toThrow("another session");
         expect(test.request).toHaveBeenCalledTimes(2);
     });
+    it("completes a code confirmed just before the start link expires", async () => {
+        const startedAt = Date.parse("2026-11-19T12:00:00Z");
+        let now = startedAt;
+        vi.spyOn(Date, "now").mockImplementation(() => now);
+        const linkExpiresAt = startedAt + 600000;
+        const confirmedAt = startedAt + 599000;
+        const codeExpiresAt = confirmedAt + 120000;
+        const test = fixture((input) => {
+            if (input.code) {
+                expect(codeExpiresAt - now).toBe(118000);
+                return { ...receipt(), url: "https://pollen.example/auth/onboarding/finish?ticket=fixture" };
+            }
+            return { ...receipt(), expires_at: new Date(linkExpiresAt).toISOString() };
+        });
+        const started = await test.app.onboarding.start(user, { returnTo: "https://app.example/return" });
+        now = startedAt + 601000;
+        await test.app.onboarding.complete(user, started.transaction, {
+            code: "confirmed-code",
+            state: started.transaction.state,
+        });
+        expect(test.request).toHaveBeenCalledTimes(2);
+        expect(started.transaction.expiresAt).toBe(new Date(linkExpiresAt + 120000).toISOString());
+    });
+    it("rejects completion at the latest possible code expiry", async () => {
+        let now = Date.parse("2026-11-19T12:00:00Z");
+        vi.spyOn(Date, "now").mockImplementation(() => now);
+        const linkExpiresAt = now + 600000;
+        const test = fixture({ ...receipt(), expires_at: new Date(linkExpiresAt).toISOString() });
+        const started = await test.app.onboarding.start(user, { returnTo: "https://app.example/return" });
+        now = linkExpiresAt + 120000;
+        await expect(
+            test.app.onboarding.complete(user, started.transaction, {
+                code: "expired-code",
+                state: started.transaction.state,
+            }),
+        ).rejects.toThrow("expired");
+        expect(test.request).toHaveBeenCalledTimes(1);
+    });
+    it("leaves the actual callback code expiry check to Pollen", async () => {
+        let now = Date.parse("2026-11-19T12:00:00Z");
+        vi.spyOn(Date, "now").mockImplementation(() => now);
+        const test = fixture({ ...receipt(), expires_at: new Date(now + 600000).toISOString() });
+        const started = await test.app.onboarding.start(user, { returnTo: "https://app.example/return" });
+        now += 601000;
+        vi.mocked(test.request).mockResolvedValueOnce(Response.json({ error: "onboarding_expired" }, { status: 410 }));
+        await expect(
+            test.app.onboarding.complete(user, started.transaction, {
+                code: "expired-code",
+                state: started.transaction.state,
+            }),
+        ).rejects.toMatchObject({ code: "onboarding_expired" });
+        expect(test.request).toHaveBeenCalledTimes(2);
+    });
+    it.each(["customer/acme", "customer acme", "équipe/acmé", " customer/acme ", "c".repeat(128), "🦊".repeat(64)])(
+        "preserves the owner-saved customer reference %s",
+        async (customerRef) => {
+            const test = fixture(receipt("customer_organizations"));
+            await test.app.onboarding.start(user, { returnTo: "https://app.example/return", customerRef });
+            expect(JSON.parse(String(test.request.mock.calls[0][1]?.body)).customer_ref).toBe(customerRef);
+        },
+    );
+    it.each(["", "   ", "c".repeat(129), "customer\nacme", "customer\u0000acme", "customer\u007facme"])(
+        "rejects an invalid customer reference before a request: %j",
+        async (customerRef) => {
+            const test = fixture(receipt("customer_organizations"));
+            await expect(
+                test.app.onboarding.start(user, { returnTo: "https://app.example/return", customerRef }),
+            ).rejects.toThrow("customer reference");
+            expect(test.request).not.toHaveBeenCalled();
+        },
+    );
     it.each(["https://other.example/onboarding", "https://user:password@pollen.example/onboarding"])(
         "rejects the returned destination %s",
         async (url) => {

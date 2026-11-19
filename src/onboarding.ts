@@ -31,6 +31,8 @@ const receiptSchema = z.object({
     policy: onboardingPolicySchema,
 });
 
+const callbackCodeLifetimeMs = 2 * 60 * 1000;
+
 export type OnboardingPolicy = z.infer<typeof onboardingPolicySchema>;
 export type OnboardingStatus = z.infer<typeof statusSchema>;
 export interface OnboardingUser {
@@ -43,6 +45,7 @@ export interface OnboardingTransaction {
     verifier: string;
     subject: string;
     returnTo: string;
+    /** Latest completion deadline. Pollen checks the actual callback code expiry. */
     expiresAt: string;
 }
 export interface StartOnboarding {
@@ -80,7 +83,13 @@ export class PollenOnboarding {
             target.search
         )
             throw new Error("Use a registered HTTPS return address without a query or fragment.");
-        if (options.customerRef !== undefined && !/^[A-Za-z0-9_.:-]{1,128}$/.test(options.customerRef)) {
+        if (
+            options.customerRef !== undefined &&
+            (typeof options.customerRef !== "string" ||
+                !options.customerRef.trim() ||
+                options.customerRef.length > 128 ||
+                /[\x00-\x1f\x7f]/.test(options.customerRef))
+        ) {
             throw new Error("Use a valid customer reference.");
         }
         const proof = await pkceChallenge(64);
@@ -102,7 +111,8 @@ export class PollenOnboarding {
                 verifier: proof.code_verifier,
                 subject: user.subject,
                 returnTo: target.href,
-                expiresAt: result.expires_at,
+                // Confirmation can occur just before the link expires. Keep PKCE for the full code lifetime.
+                expiresAt: new Date(Date.parse(result.expires_at) + callbackCodeLifetimeMs).toISOString(),
             } satisfies OnboardingTransaction,
         };
     }
