@@ -1,6 +1,21 @@
 import { boundedResponse } from "./response.js";
+import { PollenOnboarding } from "./onboarding.js";
+export {
+    onboardingTemplates,
+    type OnboardingPolicy,
+    type OnboardingStatus,
+    type OnboardingTransaction,
+} from "./onboarding.js";
 
-type FailureCode = "connection_required" | "record_not_found" | "invalid_response" | "unavailable";
+type FailureCode =
+    | "connection_required"
+    | "record_not_found"
+    | "invalid_response"
+    | "unavailable"
+    | "policy_required"
+    | "onboarding_unavailable"
+    | "onboarding_expired"
+    | "onboarding_conflict";
 
 export class PollenApplicationError extends Error {
     constructor(readonly code: FailureCode) {
@@ -30,6 +45,7 @@ const invalid = () => new PollenApplicationError("invalid_response");
 
 /** Keep this client on the application server. User proofs exist only for the current request. */
 export class PollenApplication {
+    readonly onboarding: PollenOnboarding;
     private readonly url: URL;
     private readonly request: typeof fetch;
 
@@ -57,6 +73,11 @@ export class PollenApplication {
         }
         this.url = new URL("app-sources/" + encodeURIComponent(options.sourceId) + "/rpc", endpoint);
         this.request = options.fetch ?? globalThis.fetch;
+        this.onboarding = new PollenOnboarding(
+            (user, action, body) => this.call(user, "onboarding/" + action, body),
+            endpoint.origin,
+            options.allowLocalHttp,
+        );
     }
 
     async callTool(
@@ -64,18 +85,22 @@ export class PollenApplication {
         name: string,
         args: Record<string, unknown>,
     ): Promise<Record<string, unknown>> {
+        return this.call(user, "rpc", { tool_name: name, arguments: args }, name);
+    }
+
+    private async call(user: ApplicationUser, operation: string, args: Record<string, unknown>, name?: string) {
         if (!user.proof || user.proof.length > 16384 || /\s/.test(user.proof))
             throw new Error("A current user proof is required.");
         let response: Response;
         try {
-            response = await this.request(this.url, {
+            response = await this.request(new URL(operation, this.url), {
                 method: "POST",
                 headers: {
                     authorization: "Bearer " + this.options.applicationKey,
                     "pollen-user-authorization": "Bearer " + user.proof,
                     "content-type": "application/json",
                 },
-                body: JSON.stringify({ tool_name: name, arguments: args }),
+                body: JSON.stringify(args),
                 cache: "no-store",
                 redirect: "error",
                 signal: AbortSignal.any([user.signal, AbortSignal.timeout(25000)]),
@@ -92,6 +117,12 @@ export class PollenApplication {
         }
         if (!object(body)) throw invalid();
         if (!response.ok) {
+            if (
+                ["policy_required", "onboarding_unavailable", "onboarding_expired", "onboarding_conflict"].includes(
+                    String(body.error),
+                )
+            )
+                throw new PollenApplicationError(body.error as FailureCode);
             if (response.status === 403 && body.error === "connection_required")
                 throw new PollenApplicationError("connection_required");
             if (response.status === 404 && name === "read_memory") throw new PollenApplicationError("record_not_found");
